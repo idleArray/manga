@@ -1,0 +1,125 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SRC="${1:-.}"
+shopt -s nullglob
+
+for dir in "$SRC"/*/; do
+  [ -d "$dir" ] || continue
+
+  numbers=()
+
+  for f in "$dir"*; do
+    [ -f "$f" ] || continue
+    base="${f##*/}"
+
+    # pattern 1: n.ext
+    if [[ $base =~ ^([0-9]+)\.([^.]+)$ ]]; then
+      numbers+=("${BASH_REMATCH[1]}")
+      continue
+    fi
+
+    # pattern 2: prefix-n.ext
+    if [[ $base =~ ^(.+)-([0-9]+)\.([^.]+)$ ]]; then
+      numbers+=("${BASH_REMATCH[2]}")
+      continue
+    fi
+  done
+
+  # If no numeric files, skip this directory
+  if [ ${#numbers[@]} -eq 0 ]; then
+    continue
+  fi
+
+  # Sort and unique the numbers
+  mapfile -t sorted < <(printf "%s\n" "${numbers[@]}" | sort -n | uniq)
+
+  gaps_found=false
+
+  for ((i=0; i<${#sorted[@]}-1; i++)); do
+    current=${sorted[$i]}
+    next=${sorted[$i+1]}
+
+    # if difference > 1 there is a gap
+    if (( next > current + 1 )); then
+      if ! $gaps_found; then
+        echo "Directory: $dir"
+        gaps_found=true
+      fi
+
+      # list missing numbers
+      for ((m=current+1; m<next; m++)); do
+        echo "  Missing: $m"
+      done
+    fi
+  done
+done
+
+#!/usr/bin/env bash
+set -euo pipefail
+
+SRC="${1:-.}"   # default to current directory if none provided
+
+declare -a bad_dirs=()
+
+# allow patterns to expand to empty list without literal pattern
+shopt -s nullglob
+
+for dir in "$SRC"/*/; do
+  [ -d "$dir" ] || continue
+
+  numbers=()   # collected numeric parts from files matching the two allowed patterns
+  bad=false    # set to true if we see an offending file
+
+  for f in "$dir"*; do
+    [ -f "$f" ] || continue
+    base="${f##*/}"
+
+    # skip hidden files (optional); uncomment if you want to ignore dotfiles
+    # [[ $base == .* ]] && continue
+
+    # pattern 1: n.ext  (e.g. 0.jpg)
+    if [[ $base =~ ^([0-9]+)\.([^.]+)$ ]]; then
+      numbers+=("${BASH_REMATCH[1]}")
+      continue
+    fi
+
+    # pattern 2: prefix-n.ext  (e.g. foo-3.png)
+    if [[ $base =~ ^(.+)-([0-9]+)\.([^.]+)$ ]]; then
+      numbers+=("${BASH_REMATCH[2]}")
+      continue
+    fi
+
+    # anything else -> bad folder
+    bad=true
+    break
+  done
+
+  if $bad; then
+    bad_dirs+=("$dir")
+    continue
+  fi
+
+  # if no files matched either pattern (empty folder or only dotfiles skipped) -- skip
+  if [ ${#numbers[@]} -eq 0 ]; then
+    continue
+  fi
+
+  # find minimum number (numeric comparison)
+  min="${numbers[0]}"
+  for n in "${numbers[@]:1}"; do
+    # ensure integer comparison
+    if (( n < min )); then
+      min=$n
+    fi
+  done
+
+  # if numbering does not start at 0 -> add
+  if (( min != 0 )); then
+    bad_dirs+=("$dir")
+  fi
+done
+
+# bad_dirs now contains full paths of directories that failed the checks
+# You can print them or use them further in your script.
+printf '%s\n' "${bad_dirs[@]}"
